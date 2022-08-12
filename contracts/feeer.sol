@@ -26,36 +26,22 @@ contract Feeer is Ownable {
     address wmatic = 0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270;
     address petter = 0x290000C417a1DE505eb08b7E32b3e8dA878D194E;
 
-    uint256 constant MAX_INT =
-        0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff;
-
     uint256 gotchisPerMatic = 5;
+    uint256 minProRata = 9;
     address wmaticReceiver = 0x5ecf70427aA12Cd0a2f155acbB7d29e7d15dc771;
 
     address[] private users;
     mapping(address => uint256) private usersToIndex;
     mapping(address => uint256) private userToLastFeeTimestamp;
     mapping(address => uint256) private userToWmaticPaid;
-
-    mapping(address => bool) private isApproved;
+    mapping(address => uint256) private userToGotchiAmount;
 
     constructor() {
         // Mandatory, index 0 cannot be empty
         _addUser(0x86935F11C86623deC8a25696E1C19a8659CbF95d);
-
-        // Add owner as approved
-        isApproved[msg.sender] = true;
     }
 
-    modifier onlyApproved() {
-        require(
-            msg.sender == owner() || isApproved[msg.sender],
-            "Feeer: Not Approved"
-        );
-        _;
-    }
-
-    function getIsSignedUp(address _user) external view returns (bool) {
+    function getIsSignedUp(address _user) public view returns (bool) {
         return usersToIndex[_user] > 0;
     }
 
@@ -79,16 +65,16 @@ contract Feeer is Ownable {
         return IAavegotchi(diamond).isPetOperatorForAll(_user, petter);
     }
 
-    function getIsApproved(address _user) public view returns (bool) {
-        return isApproved[_user];
-    }
-
     function getUsers() external view returns (address[] memory) {
         return users;
     }
 
     function getUsersCount() external view returns (uint256) {
         return users.length - 1;
+    }
+
+    function getUsersToIndex(address _user) external view returns (uint256) {
+        return usersToIndex[_user];
     }
 
     function getUsersIndexed(uint256 _pointer, uint256 _amount)
@@ -105,16 +91,17 @@ contract Feeer is Ownable {
         return addresses;
     }
 
-    function getUsersToIndex(address _user) external view returns (uint256) {
-        return usersToIndex[_user];
-    }
-
-    function getWmaticEstimation(uint256 _amountGochis)
+    function getWmaticPayPerGotchis(uint256 _amountGochis)
         public
         view
         returns (uint256)
     {
         return ((_amountGochis / gotchisPerMatic) + 1) * 10**18;
+    }
+
+    function getWmaticPayPerUser(address _user) public view returns (uint256) {
+        uint256 amountGotchis = getAmountGotchis(_user);
+        return ((amountGotchis / gotchisPerMatic) + 1) * 10**18;
     }
 
     function getAmountGotchis(address _user) public view returns (uint256) {
@@ -149,35 +136,51 @@ contract Feeer is Ownable {
         }
     }
 
-    function getNeedsRegulation(address _user) public view returns (bool) {
+    function getWmaticRegPerUser(address _user) public view returns (uint256) {
+        // Get timings. Can't regulate after 30 days
+        uint256 lastFeeTimestamp = userToLastFeeTimestamp[_user];
+
+        // Pro rata calc
+        uint256 daysPassed = (block.timestamp - lastFeeTimestamp) / 1 days;
+        uint256 proRata = ((100 * (30 - daysPassed)) / 30);
+
+        // No need to regulate if amount is low
+        if (proRata < minProRata) return 0;
+
         // Get number of gotchis
-        uint256 amountGotchis = getAmountGotchis(_user);
+        uint256 newAmountGotchis = getAmountGotchis(_user);
+        uint256 oldAmountGotchis = userToGotchiAmount[_user];
 
+        // Get Wmatic amounts
         uint256 paidWmatic = userToWmaticPaid[_user];
-        uint256 newEstimation = getWmaticEstimation(amountGotchis);
+        uint256 estimation = getWmaticPayPerGotchis(newAmountGotchis);
 
-        if (newEstimation > paidWmatic) return true;
-        else return false;
+        if (
+            estimation > paidWmatic &&
+            newAmountGotchis > oldAmountGotchis &&
+            lastFeeTimestamp + 30 days > block.timestamp
+        ) {
+            uint256 wmaticToPay = (proRata * estimation) / 100;
+            return wmaticToPay;
+        } else return 0;
     }
 
-    function getBatchNeedsRegulation(address[] calldata _users)
+    function getBatchWmaticRegPerUser(address[] calldata _users)
         external
         view
-        returns (bool[] memory status_)
+        returns (uint256[] memory status_)
     {
         uint256 length = _users.length;
-        status_ = new bool[](length);
+        status_ = new uint256[](length);
         for (uint256 i = 0; i < length; ) {
             address user = _users[i];
-            status_[i] = getNeedsRegulation(user);
+            status_[i] = getWmaticRegPerUser(user);
             unchecked {
                 ++i;
             }
         }
     }
 
-    /** @notice Can sign up only once
-     */
     function signUp() external {
         // Make sure user is not already signed up
         require(usersToIndex[msg.sender] == 0, "Feeer: Already user");
@@ -185,75 +188,77 @@ contract Feeer is Ownable {
         // Make sure user has set petOperatorForAll
         require(
             hasApprovedGotchiInteraction(msg.sender),
-            "Feeer: Didn't set petOperatorForAll"
+            "Feeer: Hasn't set petOperatorForAll"
         );
 
         // Make him pay
-        pay(msg.sender);
+        _pay(msg.sender);
 
         // Add to the user array
         _addUser(msg.sender);
     }
 
-    /** @dev public because bot can remove users
-     */
-    function leave(address _user) external {
+    function leave() external {
         // Check if the user is a user
-        require(usersToIndex[msg.sender] > 0, "Feeer: Not a user");
-
-        // Check if user hmiself or bot
         require(
-            msg.sender == _user || getIsApproved(msg.sender),
-            "Freeer: Not allowed to remove user"
+            usersToIndex[msg.sender] > 0,
+            "Feeer: Can't leave, not registered as user"
         );
 
         // Remove from user array
         _removeUser(msg.sender);
     }
 
-    /** @dev public because used when signing up and by the bot
-     */
-    function pay(address _user) public {
-        // Checking that it has been at least 30 days
-        require(getNeedsToPay(_user), "Feeer: 2soon2pay");
-
-        // Get number of gotchis
-        uint256 amountGotchis = getAmountGotchis(_user);
-
-        // User must have at least 1 gotchi
-        require(amountGotchis > 0, "Feeer: You don't own a gotchi");
-
-        // Save timestamp
-        userToLastFeeTimestamp[_user] = block.timestamp;
-
-        // Pay amount
-        uint256 amount = getWmaticEstimation(amountGotchis);
-
-        // Save wmatic amount
-        userToWmaticPaid[_user] = amount;
-
-        // pay
-        bool success = IERC20(wmatic).transferFrom(
-            _user,
-            wmaticReceiver,
-            amount
+    function removeUser(address _user) public {
+        // Check if the user is a user
+        require(
+            usersToIndex[_user] > 0,
+            "Feeer: Can't remove, not registered as user"
         );
-        require(success, "Freeer: transferFrom failed");
+
+        // Has removed gotchi interaction OR can't pay OR can't regulate
+        require(
+            !hasApprovedGotchiInteraction(_user) ||
+                IERC20(wmatic).balanceOf(_user) >= getWmaticPayPerUser(_user) ||
+                IERC20(wmatic).balanceOf(_user) >= getWmaticRegPerUser(_user)
+        );
+
+        _removeUser(msg.sender);
     }
 
-    function regulate(address _user) external {
-        require(getNeedsRegulation(_user), "Feeer: No regulation needed");
-        // Pro rata calc
-        uint256 amountGotchis = getAmountGotchis(_user);
-        uint256 daysPassed = block.timestamp -
-            userToLastFeeTimestamp[_user] /
-            1 days;
-        uint256 proRata = ((100 * (30 days - daysPassed)) / 30 days) + 1 days;
-        uint256 esimtation = getWmaticEstimation(amountGotchis);
-        uint256 wmaticToPay = (proRata * esimtation) / 100;
+    function batchRemoveUsers(address[] calldata _users) external {
+        uint256 length = _users.length;
+        for (uint256 i = 0; i < length; ) {
+            address user = _users[i];
+            removeUser(user);
+            unchecked {
+                ++i;
+            }
+        }
+    }
 
-        // save timestamp
-        userToLastFeeTimestamp[_user] = block.timestamp;
+    function pay(address _user) public {
+        require(getIsSignedUp(_user), "Freer: Can't charge non-users");
+        _pay(_user);
+    }
+
+    function batchPay(address[] calldata _users) external {
+        uint256 length = _users.length;
+        for (uint256 i = 0; i < length; ) {
+            address user = _users[i];
+            pay(user);
+            unchecked {
+                ++i;
+            }
+        }
+    }
+
+    function regulate(address _user) public {
+        require(getIsSignedUp(_user), "Freer: Can't regulate non-users");
+
+        uint256 amountGotchis = getAmountGotchis(_user);
+        uint256 wmaticToPay = getWmaticRegPerUser(_user);
+        require(wmaticToPay > 0, "Feeer: No regulation needed");
 
         // Transfer the funds
         bool success = IERC20(wmatic).transferFrom(
@@ -262,11 +267,59 @@ contract Feeer is Ownable {
             wmaticToPay
         );
         require(success, "Freeer: transferFrom failed");
+
+        // Add amount paid
+        userToWmaticPaid[_user] += wmaticToPay;
+
+        // Save amount of gotchis when paid regulation
+        userToGotchiAmount[_user] = amountGotchis;
+    }
+
+    function batchRegulate(address[] calldata _users) external {
+        uint256 length = _users.length;
+        for (uint256 i = 0; i < length; ) {
+            address user = _users[i];
+            regulate(user);
+            unchecked {
+                ++i;
+            }
+        }
     }
 
     /**
         Internal 
     */
+
+    function _pay(address _user) internal {
+        // Checking that it has been at least 30 days
+        require(getNeedsToPay(_user), "Feeer: 2soon2pay");
+
+        // Get number of gotchis
+        uint256 amountGotchis = getAmountGotchis(_user);
+
+        // User must have at least 1 gotchi
+        require(amountGotchis > 0, "Feeer: Doesn't own a gotchi");
+
+        // Pay amount
+        uint256 amount = getWmaticPayPerGotchis(amountGotchis);
+
+        // pay
+        bool success = IERC20(wmatic).transferFrom(
+            _user,
+            wmaticReceiver,
+            amount
+        );
+        require(success, "Freeer: transferFrom failed");
+
+        // Save timestamp
+        userToLastFeeTimestamp[_user] = block.timestamp;
+
+        // Save wmatic amount
+        userToWmaticPaid[_user] = amount;
+
+        // Save amount of gotchis
+        userToGotchiAmount[_user] = amountGotchis;
+    }
 
     function _addUser(address _newUser) private {
         // No need to add twice the same account
@@ -306,11 +359,11 @@ contract Feeer is Ownable {
     /**
         Admin 
     */
-    function setIsApproved(address _user, bool _isApproved) external onlyOwner {
-        isApproved[_user] = _isApproved;
+    function updateGotchisPerMatic(uint256 _amount) external onlyOwner {
+        gotchisPerMatic = _amount;
     }
 
-    function updateGotchisPerMatic(uint256 _amount) external onlyApproved {
-        gotchisPerMatic = _amount;
+    function updateMinProRata(uint256 _amount) external onlyOwner {
+        minProRata = _amount;
     }
 }
