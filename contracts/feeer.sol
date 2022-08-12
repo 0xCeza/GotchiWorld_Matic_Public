@@ -99,11 +99,6 @@ contract Feeer is Ownable {
         return ((_amountGochis / gotchisPerMatic) + 1) * 10**18;
     }
 
-    function getWmaticPayPerUser(address _user) public view returns (uint256) {
-        uint256 amountGotchis = getAmountGotchis(_user);
-        return ((amountGotchis / gotchisPerMatic) + 1) * 10**18;
-    }
-
     function getAmountGotchis(address _user) public view returns (uint256) {
         // Amount of gotchis in the wallet
         uint32[] memory tokenIds = IAavegotchi(diamond).tokenIdsOfOwner(_user);
@@ -134,6 +129,11 @@ contract Feeer is Ownable {
                 ++i;
             }
         }
+    }
+
+    function getWmaticPayPerUser(address _user) public view returns (uint256) {
+        uint256 amountGotchis = getAmountGotchis(_user);
+        return ((amountGotchis / gotchisPerMatic) + 1) * 10**18;
     }
 
     function getWmaticRegPerUser(address _user) public view returns (uint256) {
@@ -268,8 +268,12 @@ contract Feeer is Ownable {
         );
         require(success, "Freeer: transferFrom failed");
 
-        // Add amount paid
-        userToWmaticPaid[_user] += wmaticToPay;
+        /**
+        this is not the amount actually paid
+        This is the amount that should have been paid for 30 days
+        It is necessary to no regulate multiple times a user
+         */
+        userToWmaticPaid[_user] = getWmaticPayPerGotchis(amountGotchis);
 
         // Save amount of gotchis when paid regulation
         userToGotchiAmount[_user] = amountGotchis;
