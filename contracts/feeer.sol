@@ -28,6 +28,7 @@ contract Feeer is Ownable {
 
     uint256 gotchisPerMatic = 5;
     uint256 minProRata = 9;
+    // wmaticReceiver has to be different than owner in case of wallet hack
     address wmaticReceiver = 0x5ecf70427aA12Cd0a2f155acbB7d29e7d15dc771;
 
     address[] private users;
@@ -40,6 +41,10 @@ contract Feeer is Ownable {
         // Mandatory, index 0 cannot be empty
         _addUser(0x86935F11C86623deC8a25696E1C19a8659CbF95d);
     }
+
+    /*************************************************
+     * G E T T E R S
+     *************************************************/
 
     function getIsSignedUp(address _user) public view returns (bool) {
         return usersToIndex[_user] > 0;
@@ -69,14 +74,6 @@ contract Feeer is Ownable {
         return users;
     }
 
-    function getUsersCount() external view returns (uint256) {
-        return users.length - 1;
-    }
-
-    function getUsersToIndex(address _user) external view returns (uint256) {
-        return usersToIndex[_user];
-    }
-
     function getUsersIndexed(uint256 _pointer, uint256 _amount)
         external
         view
@@ -89,6 +86,50 @@ contract Feeer is Ownable {
             addresses[i] = users[pointer];
         }
         return addresses;
+    }
+
+    function getUsersCount() external view returns (uint256) {
+        return users.length - 1;
+    }
+
+    function getUsersToIndex(address _user) external view returns (uint256) {
+        return usersToIndex[_user];
+    }
+
+    /**
+     * returns true if need to be removed
+     * returns false if everything is fine
+     */
+    function getNeedRemoveUser(address _user) public view returns (bool) {
+        // If has remove isPetOperatorForAll
+        if (!hasApprovedGotchiInteraction(_user)) return true;
+
+        // If it's time to pay and doesn't have enough wmatic
+        uint256 balanceUser = IERC20(wmatic).balanceOf(_user);
+        if (balanceUser < getWmaticPayPerUser(_user) && getIsTimeToPay(_user))
+            return true;
+
+        // If needs regulation and doesn't have enough matic
+        uint256 amountToRegulate = getWmaticRegPerUser(_user);
+        if (amountToRegulate > 0 && amountToRegulate > balanceUser) return true;
+
+        return false;
+    }
+
+    function getBatchNeedRemoveUser(address[] calldata _users)
+        external
+        view
+        returns (bool[] memory status_)
+    {
+        uint256 length = _users.length;
+        status_ = new bool[](length);
+        for (uint256 i = 0; i < length; ) {
+            address user = _users[i];
+            status_[i] = getNeedRemoveUser(user);
+            unchecked {
+                ++i;
+            }
+        }
     }
 
     function getWmaticPayPerGotchis(uint256 _amountGochis)
@@ -110,7 +151,11 @@ contract Feeer is Ownable {
         return tokenIds.length + lentGotchis;
     }
 
-    function getNeedsToPay(address _user) public view returns (bool) {
+    /**
+        @dev not checking if needs to be removed because
+        the bot will always check needs to be removed first
+     */
+    function getIsTimeToPay(address _user) public view returns (bool) {
         uint256 lastFeeTimestamp = userToLastFeeTimestamp[_user];
         return lastFeeTimestamp + 30 days < block.timestamp;
     }
@@ -124,7 +169,7 @@ contract Feeer is Ownable {
         status_ = new bool[](length);
         for (uint256 i = 0; i < length; ) {
             address user = _users[i];
-            status_[i] = getNeedsToPay(user);
+            status_[i] = getIsTimeToPay(user);
             unchecked {
                 ++i;
             }
@@ -149,15 +194,15 @@ contract Feeer is Ownable {
 
         // Get number of gotchis
         uint256 newAmountGotchis = getAmountGotchis(_user);
-        uint256 oldAmountGotchis = userToGotchiAmount[_user];
 
         // Get Wmatic amounts
         uint256 paidWmatic = userToWmaticPaid[_user];
         uint256 estimation = getWmaticPayPerGotchis(newAmountGotchis);
 
+        // If the new estimation is higher than the paid or regulated one
+        // && it is less than 30 days (if > 30 days it's pay() not regulate())
         if (
             estimation > paidWmatic &&
-            newAmountGotchis > oldAmountGotchis &&
             lastFeeTimestamp + 30 days > block.timestamp
         ) {
             uint256 wmaticToPay = (proRata * estimation) / 100;
@@ -181,6 +226,14 @@ contract Feeer is Ownable {
         }
     }
 
+    /*************************************************
+     * U S E R   F U N C T I O N S
+     *************************************************/
+
+    /**
+     * @dev no need to check if approved enough matic
+     * it is done when trying to transfer in _pay()
+     */
     function signUp() external {
         // Make sure user is not already signed up
         require(usersToIndex[msg.sender] == 0, "Feeer: Already user");
@@ -209,6 +262,12 @@ contract Feeer is Ownable {
         _removeUser(msg.sender);
     }
 
+    /*************************************************
+     * B O T   F U N C T I O N S
+     * @notice Anyone can call the Both Functions
+     * The functions will revert if the conditions are not met
+     *************************************************/
+
     function removeUser(address _user) public {
         // Check if the user is a user
         require(
@@ -216,12 +275,8 @@ contract Feeer is Ownable {
             "Feeer: Can't remove, not registered as user"
         );
 
-        // Has removed gotchi interaction OR can't pay OR can't regulate
-        require(
-            !hasApprovedGotchiInteraction(_user) ||
-                IERC20(wmatic).balanceOf(_user) >= getWmaticPayPerUser(_user) ||
-                IERC20(wmatic).balanceOf(_user) >= getWmaticRegPerUser(_user)
-        );
+        // Has removed gotchi interaction OR can't pay
+        require(!getNeedRemoveUser(_user));
 
         _removeUser(msg.sender);
     }
@@ -238,7 +293,7 @@ contract Feeer is Ownable {
     }
 
     function pay(address _user) public {
-        require(getIsSignedUp(_user), "Freer: Can't charge non-users");
+        require(getIsSignedUp(_user), "Feeer: Can't charge non-users");
         _pay(_user);
     }
 
@@ -254,7 +309,7 @@ contract Feeer is Ownable {
     }
 
     function regulate(address _user) public {
-        require(getIsSignedUp(_user), "Freer: Can't regulate non-users");
+        require(getIsSignedUp(_user), "Feeer: Can't regulate non-users");
 
         uint256 amountGotchis = getAmountGotchis(_user);
         uint256 wmaticToPay = getWmaticRegPerUser(_user);
@@ -266,7 +321,7 @@ contract Feeer is Ownable {
             wmaticReceiver,
             wmaticToPay
         );
-        require(success, "Freeer: transferFrom failed");
+        require(success, "Feeer: transferFrom failed");
 
         /**
         this is not the amount actually paid
@@ -290,13 +345,13 @@ contract Feeer is Ownable {
         }
     }
 
-    /**
-        Internal 
-    */
+    /*************************************************
+     * I N T E R N A L   F U N C T I O N S
+     *************************************************/
 
     function _pay(address _user) internal {
         // Checking that it has been at least 30 days
-        require(getNeedsToPay(_user), "Feeer: 2soon2pay");
+        require(getIsTimeToPay(_user), "Feeer: 2soon2pay");
 
         // Get number of gotchis
         uint256 amountGotchis = getAmountGotchis(_user);
@@ -313,7 +368,7 @@ contract Feeer is Ownable {
             wmaticReceiver,
             amount
         );
-        require(success, "Freeer: transferFrom failed");
+        require(success, "Feeer: transferFrom failed");
 
         // Save timestamp
         userToLastFeeTimestamp[_user] = block.timestamp;
@@ -360,9 +415,9 @@ contract Feeer is Ownable {
         usersToIndex[_userLeaver] = 0;
     }
 
-    /**
-        Admin 
-    */
+    /*************************************************
+     * A D M I N   F U N C T I O N S
+     *************************************************/
     function updateGotchisPerMatic(uint256 _amount) external onlyOwner {
         gotchisPerMatic = _amount;
     }
@@ -370,4 +425,6 @@ contract Feeer is Ownable {
     function updateMinProRata(uint256 _amount) external onlyOwner {
         minProRata = _amount;
     }
+
+    // If you read the whole contract : <3
 }

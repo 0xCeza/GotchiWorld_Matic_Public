@@ -91,6 +91,9 @@ async function passDays(amount) {
 
 /** TODO
  * Test removeUser
+ * test multiple PAY in a row with 1 day pass
+ * test multiple REGULATE in a row with 1 day pass
+ * in .sol check if this works correctly : getUsersIndexed()
  */
 
 describe("Deployement => SignUp => Leaving", function () {
