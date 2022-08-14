@@ -101,6 +101,9 @@ contract Feeer is Ownable {
      * returns false if everything is fine
      */
     function getNeedRemoveUser(address _user) public view returns (bool) {
+        // Needs to be a user
+        if (!getIsSignedUp(_user)) return false;
+
         // If has remove isPetOperatorForAll
         if (!hasApprovedGotchiInteraction(_user)) return true;
 
@@ -109,7 +112,7 @@ contract Feeer is Ownable {
         if (balanceUser < getWmaticPayPerUser(_user) && getIsTimeToPay(_user))
             return true;
 
-        // If needs regulation and doesn't have enough matic
+        // // If needs regulation and doesn't have enough matic
         uint256 amountToRegulate = getWmaticRegPerUser(_user);
         if (amountToRegulate > 0 && amountToRegulate > balanceUser) return true;
 
@@ -182,11 +185,15 @@ contract Feeer is Ownable {
     }
 
     function getWmaticRegPerUser(address _user) public view returns (uint256) {
-        // Get timings. Can't regulate after 30 days
+        // Get timings.
         uint256 lastFeeTimestamp = userToLastFeeTimestamp[_user];
 
         // Pro rata calc
         uint256 daysPassed = (block.timestamp - lastFeeTimestamp) / 1 days;
+
+        // Can't regulate after 30 days
+        if (daysPassed > 30) return 0;
+
         uint256 proRata = ((100 * (30 - daysPassed)) / 30);
 
         // No need to regulate if amount is low
@@ -200,11 +207,7 @@ contract Feeer is Ownable {
         uint256 estimation = getWmaticPayPerGotchis(newAmountGotchis);
 
         // If the new estimation is higher than the paid or regulated one
-        // && it is less than 30 days (if > 30 days it's pay() not regulate())
-        if (
-            estimation > paidWmatic &&
-            lastFeeTimestamp + 30 days > block.timestamp
-        ) {
+        if (estimation > paidWmatic) {
             uint256 wmaticToPay = (proRata * estimation) / 100;
             return wmaticToPay;
         } else return 0;
@@ -268,30 +271,6 @@ contract Feeer is Ownable {
      * The functions will revert if the conditions are not met
      *************************************************/
 
-    function removeUser(address _user) public {
-        // Check if the user is a user
-        require(
-            usersToIndex[_user] > 0,
-            "Feeer: Can't remove, not registered as user"
-        );
-
-        // Has removed gotchi interaction OR can't pay
-        require(!getNeedRemoveUser(_user));
-
-        _removeUser(msg.sender);
-    }
-
-    function batchRemoveUsers(address[] calldata _users) external {
-        uint256 length = _users.length;
-        for (uint256 i = 0; i < length; ) {
-            address user = _users[i];
-            removeUser(user);
-            unchecked {
-                ++i;
-            }
-        }
-    }
-
     function pay(address _user) public {
         require(getIsSignedUp(_user), "Feeer: Can't charge non-users");
         _pay(_user);
@@ -339,6 +318,30 @@ contract Feeer is Ownable {
         for (uint256 i = 0; i < length; ) {
             address user = _users[i];
             regulate(user);
+            unchecked {
+                ++i;
+            }
+        }
+    }
+
+    function removeUser(address _user) public {
+        // Check if the user is a user
+        require(
+            usersToIndex[_user] > 0,
+            "Feeer: Can't remove, not registered as user"
+        );
+
+        // Has removed gotchi interaction OR can't pay
+        require(getNeedRemoveUser(_user), "Feeer: Shouldn't be removed");
+
+        _removeUser(_user);
+    }
+
+    function batchRemoveUsers(address[] calldata _users) external {
+        uint256 length = _users.length;
+        for (uint256 i = 0; i < length; ) {
+            address user = _users[i];
+            removeUser(user);
             unchecked {
                 ++i;
             }
@@ -393,7 +396,7 @@ contract Feeer is Ownable {
 
     function _removeUser(address _userLeaver) private {
         // Cant remove an account that is not a user
-        require(usersToIndex[_userLeaver] != 0, "Feeer: user already removed");
+        require(usersToIndex[_userLeaver] > 0, "Feeer: user already removed");
 
         // Get the index of the leaver
         uint256 _indexLeaver = usersToIndex[_userLeaver];
