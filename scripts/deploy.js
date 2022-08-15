@@ -1,11 +1,16 @@
+// Command to deploy :
+// npx hardhat run scripts/deploy.js --network <your-network>
+// Command to verify :
+// npx hardhat verify --network <your-network> CONTRACT_ADDRESS "Constructor argument 1"
+
 async function main() {
   // We get the contract to deploy
-  const Feeing = await ethers.getContractFactory("Feeing");
-  const feeing = await Feeing.deploy();
+  const Feeer = await ethers.getContractFactory("Feeer");
+  const feeer = await Feeer.deploy();
 
-  await feeing.deployed();
+  await feeer.deployed();
 
-  console.log("Feeing deployed to:", feeing.address);
+  console.log("Feeer deployed to:", feeer.address);
 }
 
 main()

@@ -89,13 +89,6 @@ async function passDays(amount) {
   await network.provider.send("evm_mine");
 }
 
-/** TODO
- * Test removeUser
- * test multiple PAY in a row with 1 day pass
- * test multiple REGULATE in a row with 1 day pass
- * in .sol check if this works correctly : getUsersIndexed()
- */
-
 describe("Deployement => SignUp => Leaving", function () {
   let owner, u1, u2, u3, u4, u5, u6;
 

@@ -22,14 +22,15 @@ interface IAavegotchi {
 }
 
 contract Feeer is Ownable {
-    address diamond = 0x86935F11C86623deC8a25696E1C19a8659CbF95d;
-    address wmatic = 0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270;
-    address petter = 0x290000C417a1DE505eb08b7E32b3e8dA878D194E;
+    address constant diamond = 0x86935F11C86623deC8a25696E1C19a8659CbF95d;
+    address constant wmatic = 0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270;
+    address constant petter = 0x290000C417a1DE505eb08b7E32b3e8dA878D194E;
 
     uint256 gotchisPerMatic = 5;
     uint256 minProRata = 9;
     // wmaticReceiver has to be different than owner in case of wallet hack
-    address wmaticReceiver = 0x5ecf70427aA12Cd0a2f155acbB7d29e7d15dc771;
+    address constant wmaticReceiver =
+        0xdC5b665e8135023F80BF4DbF85F65086c7aC3BB1;
 
     address[] private users;
     mapping(address => uint256) private usersToIndex;
