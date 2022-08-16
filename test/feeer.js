@@ -1,8 +1,3 @@
-/**
- * Test can't be run anymore because of change in .sol file
- * Now testing requires fetching data from subgraph to get amount of gotchis instead of on chain
- */
-
 const { expect } = require("chai");
 const { ethers } = require("hardhat");
 
