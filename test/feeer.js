@@ -401,4 +401,10 @@ describe("Deployement => SignUp => Leaving", function () {
     await feeer.connect(owner).updateIsApproved(u1.address, true);
     expect(await feeer.getIsApproved(u1.address)).to.be.true;
   });
+
+  it("Can't remove index 0", async function () {
+    await expect(
+      feeer.removeUser("0x86935f11c86623dec8a25696e1c19a8659cbf95d", 0)
+    ).to.be.reverted;
+  });
 });
