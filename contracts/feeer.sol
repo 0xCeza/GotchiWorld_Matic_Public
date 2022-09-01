@@ -21,6 +21,22 @@ interface IAavegotchi {
         returns (uint32[] memory tokenIds_);
 }
 
+interface IPreviousContract {
+    function getIsSignedUp(address _user) external view returns (bool);
+
+    function getUserLastFeeTimestamp(address _user)
+        external
+        view
+        returns (uint256);
+
+    function getUserToGotchiAmount(address _user)
+        external
+        view
+        returns (uint256);
+
+    function getUserToWmaticPaid(address _user) external view returns (uint256);
+}
+
 contract Feeer is Ownable {
     address constant diamond = 0x86935F11C86623deC8a25696E1C19a8659CbF95d;
     address constant wmatic = 0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270;
@@ -181,9 +197,20 @@ contract Feeer is Ownable {
             getIsTimeToPay(_user)
         ) return true;
 
+        // If it's time to pay and doesn't have enough approval
+        uint256 userAllowance = IERC20(wmatic).allowance(_user, address(this));
+        if (
+            userAllowance < getWmaticPayPerGotchis(_amountGotchis) &&
+            getIsTimeToPay(_user)
+        ) return true;
+
         // If needs regulation and doesn't have enough matic
         uint256 amountToRegulate = getWmaticRegPerUser(_user, _amountGotchis);
         if (amountToRegulate > 0 && amountToRegulate > balanceUser) return true;
+
+        // If needs regulation and doesn't have enough matic
+        if (amountToRegulate > 0 && amountToRegulate > userAllowance)
+            return true;
 
         return false;
     }
@@ -486,6 +513,41 @@ contract Feeer is Ownable {
         onlyOwner
     {
         isApproved[_address] = _status;
+    }
+
+    function migrateUser(address _user, address _contract) public onlyApproved {
+        require(
+            IPreviousContract(_contract).getIsSignedUp(_user),
+            "Feeer: Not a user"
+        );
+
+        require(usersToIndex[_user] == 0, "Feeer: Already User");
+
+        // userToLastFeeTimestamp
+        userToLastFeeTimestamp[_user] = IPreviousContract(_contract)
+            .getUserLastFeeTimestamp(_user);
+
+        // userToWmaticPaid
+        userToWmaticPaid[_user] = IPreviousContract(_contract)
+            .getUserToWmaticPaid(_user);
+
+        // userToGotchiAmount
+        userToGotchiAmount[_user] = IPreviousContract(_contract)
+            .getUserToGotchiAmount(_user);
+    }
+
+    function batchMigrateUsers(address[] calldata _users, address _contract)
+        external
+        onlyApproved
+    {
+        uint256 length = _users.length;
+        for (uint256 i = 0; i < length; ) {
+            address user = users[i];
+            migrateUser(user, _contract);
+            unchecked {
+                ++i;
+            }
+        }
     }
 
     // If you read the whole contract : <3
